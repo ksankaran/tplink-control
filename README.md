@@ -7,6 +7,7 @@ A simple web app to control your smart devices with a toggle button. Supports mu
 - **Simple Web Interface**: Clean, modern UI for controlling your devices
 - **Multi-Device Support**: Control devices from multiple brands through a unified interface
 - **Device Adapter Architecture**: Extensible design for supporting multiple device brands
+- **Schedule Management**: Schedule on/off times for TP-Link devices (TP-Link specific feature)
 - **Backward Compatible**: Existing `.env` configuration still works
 - **Error Handling**: User-friendly error messages for connection issues
 - **Brightness & Color Control**: Support for advanced features on compatible devices
@@ -204,10 +205,18 @@ Navigate to `http://localhost:8000` to see the device control interface. You can
 - `http://localhost:8000/?device=default` - Control the default device
 - `http://localhost:8000/?device=hue-light` - Control a named device
 
+**Schedule Management** (TP-Link devices only):
+- For TP-Link devices, a "Manage Schedules" link appears on the main page
+- Click the link to view, add, or delete schedules
+- Schedules allow you to set automatic on/off times for specific days of the week
+
 ### API Endpoints
 
 - `GET /` - Display device status and control interface
 - `POST /toggle` - Toggle device power state
+- `GET /schedules` - Manage schedules for TP-Link devices (TP-Link specific)
+- `POST /schedules/add` - Add a new schedule (TP-Link specific)
+- `POST /schedules/delete` - Delete a schedule (TP-Link specific)
 
 ## Device Features
 
@@ -219,6 +228,7 @@ Navigate to `http://localhost:8000` to see the device control interface. You can
 ### Advanced Features (Supported Devices)
 - **Brightness Control**: Hue, Nanoleaf, Geeni, Cree
 - **Color Control**: Hue, Nanoleaf, Geeni, Cree
+- **Schedule Management**: TP-Link Kasa (schedule on/off times with day selection)
 
 ## Error Handling
 

@@ -83,6 +83,13 @@ tplink-control/
    - Embedded CSS styling with modern gradient design
    - Responsive design with viewport meta tag
    - Error display for connection issues
+   - Schedule management UI for TP-Link devices
+
+7. **Schedule Management** (TP-Link specific)
+   - Schedule on/off times for TP-Link devices
+   - Day-of-week selection for recurring schedules
+   - Add, view, and delete schedules
+   - Integrated with device registry system
 
 ## API Endpoints
 
@@ -113,6 +120,54 @@ tplink-control/
   - 404: Device not found
   - 503: Device connection error
   - 500: Device operation error
+
+### GET `/schedules` (TP-Link specific)
+- **Purpose**: Display schedule management interface for TP-Link devices
+- **Query Parameters**:
+  - `device` (optional): Name of TP-Link device (defaults to "default")
+- **Response**: HTML page with list of schedules and form to add new schedules
+- **Behavior**:
+  - Retrieves TP-Link device from registry
+  - Fetches existing schedules from device
+  - Displays schedule list with time, action, and days
+  - Provides form to add new schedules
+- **Error Responses**:
+  - 400: Device is not a TP-Link device
+  - 404: Device not found
+  - 503: Device connection error
+
+### POST `/schedules/add` (TP-Link specific)
+- **Purpose**: Add a new schedule to a TP-Link device
+- **Method**: POST
+- **Form Data**:
+  - `device` (optional): Name of TP-Link device (defaults to "default")
+  - `time` (required): Time in HH:MM format
+  - `action` (required): "on" or "off"
+  - `days` (optional): List of day numbers (0=Mon, 6=Sun)
+- **Behavior**:
+  - Creates a schedule rule on the TP-Link device
+  - Enables global scheduling if not already enabled
+  - Redirects to schedules page
+- **Response**: HTTP 303 redirect to `/schedules?device={device}`
+- **Error Responses**:
+  - 400: Device is not a TP-Link device or invalid input
+  - 404: Device not found
+  - 503: Device connection error
+
+### POST `/schedules/delete` (TP-Link specific)
+- **Purpose**: Delete a schedule from a TP-Link device
+- **Method**: POST
+- **Form Data**:
+  - `device` (optional): Name of TP-Link device (defaults to "default")
+  - `rule_id` (required): ID of the schedule rule to delete
+- **Behavior**:
+  - Deletes the specified schedule rule from the TP-Link device
+  - Redirects to schedules page
+- **Response**: HTTP 303 redirect to `/schedules?device={device}`
+- **Error Responses**:
+  - 400: Device is not a TP-Link device
+  - 404: Device not found
+  - 503: Device connection error
 
 ## Configuration
 
@@ -334,6 +389,10 @@ The application runs on `0.0.0.0:8000` by default, making it accessible from any
 - Uses local network communication
 - No authentication required
 - Supports smart plugs and switches
+- **Schedule Management**: Full support for scheduling on/off times
+  - Create recurring schedules with day-of-week selection
+  - View and manage existing schedules
+  - Schedules are stored on the device itself
 
 ### Philips Hue
 - Requires Hue Bridge on local network
@@ -366,8 +425,9 @@ The architecture is designed to support:
 2. **Advanced Features** (partially implemented):
    - ✅ Brightness control for lights (Hue, Nanoleaf, Geeni, Cree)
    - ✅ Color control for RGB devices (Hue, Nanoleaf, Geeni, Cree)
+   - ✅ Schedule management (TP-Link devices)
    - Device grouping/rooms (Hue groups supported)
-   - Scheduling and automation
+   - Scheduling for other device types
    - Device discovery
 
 3. **API Enhancements**:
@@ -397,3 +457,7 @@ The architecture is designed to support:
 - Tuya-based devices (Geeni, Cree) share similar implementation patterns
 - Hue devices support both individual lights and groups
 - Nanoleaf requires authentication token generation process
+- **Schedule management is TP-Link specific**: The schedule endpoints only work with TP-Link devices
+- Schedule functionality uses the underlying Kasa device directly via `_get_device()` method
+- The schedule link only appears on the main page for TP-Link devices
+- Schedule endpoints accept a `device` parameter to specify which TP-Link device to manage
