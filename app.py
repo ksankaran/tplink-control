@@ -1,23 +1,151 @@
 import os
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
-from kasa import SmartPlug
 from dotenv import load_dotenv
+from kasa import SmartPlug
+
+from devices import (
+    TPLinkDevice, HueDevice, NanoleafDevice, GeeniDevice, CreeDevice,
+    DeviceError, DeviceConnectionError
+)
+from devices.registry import DeviceRegistry
+from config import load_device_config
 
 load_dotenv()
 
 app = FastAPI()
 
-DEVICE_IP = os.getenv("DEVICE_IP")
-if not DEVICE_IP:
-    raise ValueError("DEVICE_IP environment variable is required")
+# Initialize device registry
+device_registry = DeviceRegistry()
 
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-async def get_plug():
-    plug = SmartPlug(DEVICE_IP)
-    await plug.update()
-    return plug
+# Initialize default device from environment or config
+def initialize_devices():
+    """Initialize devices from configuration."""
+    config = load_device_config()
+    
+    # If no config, try environment variable for backward compatibility
+    device_ip = os.getenv("DEVICE_IP")
+    if device_ip:
+        default_device = TPLinkDevice(device_ip=device_ip)
+        device_registry.register("default", default_device)
+    elif config:
+        # Load devices from config
+        for name, device_config in config.items():
+            device_type = device_config.get("type", "tplink")
+            device = None
+            
+            if device_type == "tplink":
+                device_ip = device_config.get("device_ip")
+                if device_ip:
+                    device = TPLinkDevice(device_ip=device_ip, device_id=name)
+            
+            elif device_type == "hue":
+                bridge_ip = device_config.get("bridge_ip")
+                api_key = device_config.get("api_key")
+                light_id = device_config.get("light_id")
+                group_id = device_config.get("group_id")
+                if bridge_ip and api_key and (light_id or group_id):
+                    device = HueDevice(
+                        bridge_ip=bridge_ip,
+                        api_key=api_key,
+                        light_id=light_id,
+                        group_id=group_id,
+                        device_id=name
+                    )
+            
+            elif device_type == "nanoleaf":
+                device_ip = device_config.get("device_ip")
+                auth_token = device_config.get("auth_token")
+                if device_ip and auth_token:
+                    device = NanoleafDevice(
+                        device_ip=device_ip,
+                        auth_token=auth_token,
+                        device_id=name
+                    )
+            
+            elif device_type == "geeni":
+                device_id = device_config.get("device_id")
+                device_ip = device_config.get("device_ip")
+                local_key = device_config.get("local_key")
+                device_version = device_config.get("device_version", "3.3")
+                if device_id and device_ip and local_key:
+                    device = GeeniDevice(
+                        device_id=device_id,
+                        device_ip=device_ip,
+                        local_key=local_key,
+                        device_version=device_version,
+                        device_id_alias=name
+                    )
+            
+            elif device_type == "cree":
+                device_id = device_config.get("device_id")
+                device_ip = device_config.get("device_ip")
+                local_key = device_config.get("local_key")
+                device_version = device_config.get("device_version", "3.3")
+                if device_id and device_ip and local_key:
+                    device = CreeDevice(
+                        device_id=device_id,
+                        device_ip=device_ip,
+                        local_key=local_key,
+                        device_version=device_version,
+                        device_id_alias=name
+                    )
+            
+            if device:
+                device_registry.register(name, device)
+    else:
+        raise ValueError(
+            "No device configuration found. Please set DEVICE_IP environment variable "
+            "or create a .devices.json configuration file."
+        )
+
+# Initialize devices on startup
+initialize_devices()
+
+async def get_device(device_name: str = "default"):
+    """
+    Get a device from the registry.
+    
+    Args:
+        device_name: Name of the device to retrieve (defaults to "default")
+        
+    Returns:
+        SmartDevice instance
+        
+    Raises:
+        HTTPException: If device is not found
+    """
+    device = device_registry.get(device_name)
+    if not device:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Device '{device_name}' not found. Available devices: {', '.join(device_registry.get_all_names())}"
+        )
+    return device
+
+async def get_plug(device_name: str = "default"):
+    """
+    Get a TP-Link SmartPlug instance for schedule management.
+    Schedules are TP-Link specific, so this function gets the underlying Kasa device.
+    
+    Args:
+        device_name: Name of the device to retrieve (defaults to "default")
+        
+    Returns:
+        SmartPlug instance
+        
+    Raises:
+        HTTPException: If device is not found or not a TP-Link device
+    """
+    device = await get_device(device_name)
+    if not isinstance(device, TPLinkDevice):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Device '{device_name}' is not a TP-Link device. Schedules are only supported for TP-Link devices."
+        )
+    return await device._get_device()
 
 def minutes_to_time(minutes: int) -> str:
     h, m = divmod(minutes, 60)
@@ -28,99 +156,186 @@ def time_to_minutes(time_str: str) -> int:
     return int(h) * 60 + int(m)
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    plug = await get_plug()
-    is_on = plug.is_on
-
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Christmas Tree Control</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                min-height: 100vh;
-                margin: 0;
-                background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-                color: white;
-            }}
-            .container {{
-                text-align: center;
-                padding: 2rem;
-            }}
-            h1 {{
-                font-size: 2rem;
-                margin-bottom: 2rem;
-            }}
-            .tree {{
-                font-size: 4rem;
-                margin-bottom: 1rem;
-            }}
-            .toggle {{
-                background: {'#22c55e' if is_on else '#64748b'};
-                border: none;
-                padding: 1rem 3rem;
-                font-size: 1.5rem;
-                border-radius: 50px;
-                cursor: pointer;
-                color: white;
-                transition: all 0.3s ease;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-            }}
-            .toggle:hover {{
-                transform: scale(1.05);
-                box-shadow: 0 6px 20px rgba(0,0,0,0.4);
-            }}
-            .status {{
-                margin-top: 1rem;
-                opacity: 0.7;
-            }}
-            .nav {{
-                margin-top: 2rem;
-            }}
-            .nav a {{
-                color: #94a3b8;
-                text-decoration: none;
-            }}
-            .nav a:hover {{
-                color: white;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="tree">🎄</div>
-            <h1>Christmas Tree</h1>
-            <form action="/toggle" method="post">
-                <button type="submit" class="toggle">
-                    {'Turn Off' if is_on else 'Turn On'}
-                </button>
-            </form>
-            <p class="status">Currently: {'ON' if is_on else 'OFF'}</p>
-            <p class="nav"><a href="/schedules">Manage Schedules</a></p>
-        </div>
-    </body>
-    </html>
+async def index(device: str = "default"):
     """
-    return html
+    Main page displaying device status and toggle button.
+    
+    Args:
+        device: Name of the device to control (defaults to "default")
+    """
+    try:
+        smart_device = await get_device(device)
+        is_on = await smart_device.is_on()
+        device_info = await smart_device.get_status()
+        device_display_name = device_info.get('alias', device)
+        
+        # Show schedule link only for TP-Link devices
+        schedule_link = ""
+        if isinstance(smart_device, TPLinkDevice):
+            schedule_link = '<p class="nav"><a href="/schedules">Manage Schedules</a></p>'
+        
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Smart Device Control</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    padding: 2rem;
+                }}
+                h1 {{
+                    font-size: 2rem;
+                    margin-bottom: 2rem;
+                }}
+                .tree {{
+                    font-size: 4rem;
+                    margin-bottom: 1rem;
+                }}
+                .toggle {{
+                    background: {'#22c55e' if is_on else '#64748b'};
+                    border: none;
+                    padding: 1rem 3rem;
+                    font-size: 1.5rem;
+                    border-radius: 50px;
+                    cursor: pointer;
+                    color: white;
+                    transition: all 0.3s ease;
+                    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                }}
+                .toggle:hover {{
+                    transform: scale(1.05);
+                    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+                }}
+                .status {{
+                    margin-top: 1rem;
+                    opacity: 0.7;
+                }}
+                .error {{
+                    color: #ef4444;
+                    margin-top: 1rem;
+                    padding: 1rem;
+                    background: rgba(239, 68, 68, 0.1);
+                    border-radius: 8px;
+                }}
+                .nav {{
+                    margin-top: 2rem;
+                }}
+                .nav a {{
+                    color: #94a3b8;
+                    text-decoration: none;
+                }}
+                .nav a:hover {{
+                    color: white;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="tree">🎄</div>
+                <h1>{device_display_name}</h1>
+                <form action="/toggle" method="post">
+                    <input type="hidden" name="device" value="{device}">
+                    <button type="submit" class="toggle">
+                        {'Turn Off' if is_on else 'Turn On'}
+                    </button>
+                </form>
+                <p class="status">Currently: {'ON' if is_on else 'OFF'}</p>
+                {schedule_link}
+            </div>
+        </body>
+        </html>
+        """
+        return html
+    except DeviceConnectionError as e:
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Connection Error</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{
+                    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    min-height: 100vh;
+                    margin: 0;
+                    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+                    color: white;
+                }}
+                .container {{
+                    text-align: center;
+                    padding: 2rem;
+                }}
+                .error {{
+                    color: #ef4444;
+                    margin-top: 1rem;
+                    padding: 1rem;
+                    background: rgba(239, 68, 68, 0.1);
+                    border-radius: 8px;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="error">
+                    <h2>Connection Error</h2>
+                    <p>{str(e)}</p>
+                    <p>Please check that your device is powered on and connected to the network.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html, status_code=503)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/toggle")
-async def toggle():
-    plug = await get_plug()
-    if plug.is_on:
-        await plug.turn_off()
-    else:
-        await plug.turn_on()
-    return RedirectResponse(url="/", status_code=303)
+async def toggle(device: str = Form("default")):
+    """
+    Toggle device power state.
+    
+    Args:
+        device: Name of the device to toggle (defaults to "default")
+    """
+    try:
+        smart_device = await get_device(device)
+        is_on = await smart_device.is_on()
+        
+        if is_on:
+            await smart_device.turn_off()
+        else:
+            await smart_device.turn_on()
+        
+        return RedirectResponse(url=f"/?device={device}", status_code=303)
+    except DeviceConnectionError as e:
+        raise HTTPException(status_code=503, detail=f"Device connection error: {str(e)}")
+    except DeviceError as e:
+        raise HTTPException(status_code=500, detail=f"Device error: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/schedules", response_class=HTMLResponse)
-async def schedules():
-    plug = await get_plug()
+async def schedules(device: str = "default"):
+    plug = await get_plug(device)
     sched = plug.modules['schedule']
     rules = sched.data.get('get_rules', {}).get('rule_list', [])
 
@@ -146,6 +361,7 @@ async def schedules():
                 </div>
                 <form action="/schedules/delete" method="post" class="delete-form">
                     <input type="hidden" name="rule_id" value="{rule_id}">
+                    <input type="hidden" name="device" value="{device}">
                     <button type="submit" class="delete-btn">Delete</button>
                 </form>
             </div>
@@ -155,7 +371,7 @@ async def schedules():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Schedules - Christmas Tree</title>
+        <title>Schedules - Smart Device Control</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             body {{
@@ -300,7 +516,7 @@ async def schedules():
     </head>
     <body>
         <div class="container">
-            <a href="/" class="back">← Back</a>
+            <a href="/?device={device}" class="back">← Back</a>
             <h1>Schedules</h1>
 
             {rules_html}
@@ -308,6 +524,7 @@ async def schedules():
             <div class="add-form">
                 <h2>Add Schedule</h2>
                 <form action="/schedules/add" method="post">
+                    <input type="hidden" name="device" value="{device}">
                     <div class="form-row">
                         <label>Time</label>
                         <input type="time" name="time" value="18:00" required>
@@ -341,8 +558,8 @@ async def schedules():
     return html
 
 @app.post("/schedules/add")
-async def add_schedule(time: str = Form(...), action: str = Form(...), days: list[str] = Form(default=[])):
-    plug = await get_plug()
+async def add_schedule(time: str = Form(...), action: str = Form(...), days: list[str] = Form(default=[]), device: str = Form("default")):
+    plug = await get_plug(device)
     sched = plug.modules['schedule']
 
     wday = [0] * 7
@@ -370,14 +587,14 @@ async def add_schedule(time: str = Form(...), action: str = Form(...), days: lis
     await sched.call('add_rule', rule)
     # Ensure global scheduling is enabled
     await sched.call('set_overall_enable', {'enable': 1})
-    return RedirectResponse(url="/schedules", status_code=303)
+    return RedirectResponse(url=f"/schedules?device={device}", status_code=303)
 
 @app.post("/schedules/delete")
-async def delete_schedule(rule_id: str = Form(...)):
-    plug = await get_plug()
+async def delete_schedule(rule_id: str = Form(...), device: str = Form("default")):
+    plug = await get_plug(device)
     sched = plug.modules['schedule']
     await sched.call('delete_rule', {'id': rule_id})
-    return RedirectResponse(url="/schedules", status_code=303)
+    return RedirectResponse(url=f"/schedules?device={device}", status_code=303)
 
 if __name__ == "__main__":
     import uvicorn
