@@ -2,3 +2,7 @@ fastapi==0.128.0
 python-dotenv==1.2.1
 python-kasa==0.7.7
 uvicorn==0.39.0
+# Phase 2: Additional device support
+aiohue==4.8.0
+nanoleafapi==2.1.2
+tinytuya==1.17.4

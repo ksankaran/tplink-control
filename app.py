@@ -3,7 +3,10 @@ from fastapi import FastAPI, HTTPException, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from dotenv import load_dotenv
 
-from devices import TPLinkDevice, DeviceError, DeviceConnectionError
+from devices import (
+    TPLinkDevice, HueDevice, NanoleafDevice, GeeniDevice, CreeDevice,
+    DeviceError, DeviceConnectionError
+)
 from devices.registry import DeviceRegistry
 from config import load_device_config
 
@@ -28,11 +31,67 @@ def initialize_devices():
         # Load devices from config
         for name, device_config in config.items():
             device_type = device_config.get("type", "tplink")
+            device = None
+            
             if device_type == "tplink":
                 device_ip = device_config.get("device_ip")
                 if device_ip:
                     device = TPLinkDevice(device_ip=device_ip, device_id=name)
-                    device_registry.register(name, device)
+            
+            elif device_type == "hue":
+                bridge_ip = device_config.get("bridge_ip")
+                api_key = device_config.get("api_key")
+                light_id = device_config.get("light_id")
+                group_id = device_config.get("group_id")
+                if bridge_ip and api_key and (light_id or group_id):
+                    device = HueDevice(
+                        bridge_ip=bridge_ip,
+                        api_key=api_key,
+                        light_id=light_id,
+                        group_id=group_id,
+                        device_id=name
+                    )
+            
+            elif device_type == "nanoleaf":
+                device_ip = device_config.get("device_ip")
+                auth_token = device_config.get("auth_token")
+                if device_ip and auth_token:
+                    device = NanoleafDevice(
+                        device_ip=device_ip,
+                        auth_token=auth_token,
+                        device_id=name
+                    )
+            
+            elif device_type == "geeni":
+                device_id = device_config.get("device_id")
+                device_ip = device_config.get("device_ip")
+                local_key = device_config.get("local_key")
+                device_version = device_config.get("device_version", "3.3")
+                if device_id and device_ip and local_key:
+                    device = GeeniDevice(
+                        device_id=device_id,
+                        device_ip=device_ip,
+                        local_key=local_key,
+                        device_version=device_version,
+                        device_id_alias=name
+                    )
+            
+            elif device_type == "cree":
+                device_id = device_config.get("device_id")
+                device_ip = device_config.get("device_ip")
+                local_key = device_config.get("local_key")
+                device_version = device_config.get("device_version", "3.3")
+                if device_id and device_ip and local_key:
+                    device = CreeDevice(
+                        device_id=device_id,
+                        device_ip=device_ip,
+                        local_key=local_key,
+                        device_version=device_version,
+                        device_id_alias=name
+                    )
+            
+            if device:
+                device_registry.register(name, device)
     else:
         raise ValueError(
             "No device configuration found. Please set DEVICE_IP environment variable "

@@ -2,13 +2,17 @@
 
 ## Project Overview
 
-This is a web application built with FastAPI that provides a unified interface to control smart devices from various brands. The application uses a device adapter pattern to support multiple device types while maintaining a consistent API. Currently supports TP-Link Kasa devices, with architecture in place for extending to other brands.
+This is a web application built with FastAPI that provides a unified interface to control smart devices from various brands. The application uses a device adapter pattern to support multiple device types while maintaining a consistent API. Currently supports TP-Link Kasa, Philips Hue, Nanoleaf, Geeni, and Cree devices.
 
 ## Technology Stack
 
 - **Framework**: FastAPI 0.128.0
 - **ASGI Server**: Uvicorn 0.39.0
-- **Device Control**: python-kasa 0.7.7
+- **Device Control Libraries**:
+  - python-kasa 0.7.7 (TP-Link Kasa)
+  - aiohue 4.8.0 (Philips Hue)
+  - nanoleafapi 2.1.2 (Nanoleaf)
+  - tinytuya 1.17.4 (Geeni, Cree - Tuya protocol)
 - **Configuration**: python-dotenv 1.2.1
 - **Python Version**: 3.8+
 
@@ -24,6 +28,10 @@ tplink-control/
 │   ├── __init__.py       # Module exports
 │   ├── base.py           # Abstract device interface
 │   ├── tplink.py         # TP-Link Kasa adapter
+│   ├── hue.py            # Philips Hue adapter
+│   ├── nanoleaf.py       # Nanoleaf adapter
+│   ├── geeni.py          # Geeni adapter (Tuya protocol)
+│   ├── cree.py           # Cree adapter (Tuya protocol)
 │   └── registry.py       # Device registry
 ├── requirements.txt       # Python dependencies
 ├── README.md             # User documentation
@@ -37,6 +45,7 @@ tplink-control/
 1. **FastAPI Application** (`app.py`)
    - Main application entry point
    - Initializes device registry on startup
+   - Supports multiple device types from configuration
    - Serves HTML directly from route handlers
    - Uses async/await for device communication
    - Enhanced error handling with user-friendly messages
@@ -48,11 +57,15 @@ tplink-control/
    - Custom exceptions: `DeviceError`, `DeviceConnectionError`
    - All methods are async with proper type hints
 
-3. **Device Adapters** (`devices/tplink.py`, etc.)
-   - Brand-specific implementations of `SmartDevice`
+3. **Device Adapters**
+   - **TPLinkDevice** (`devices/tplink.py`): TP-Link Kasa devices
+   - **HueDevice** (`devices/hue.py`): Philips Hue lights and groups
+   - **NanoleafDevice** (`devices/nanoleaf.py`): Nanoleaf Light Panels, Canvas, Shapes
+   - **GeeniDevice** (`devices/geeni.py`): Geeni smart lights (Tuya protocol)
+   - **CreeDevice** (`devices/cree.py`): Cree Connected smart lights (Tuya protocol)
+   - All adapters implement `SmartDevice` interface
    - Handle device-specific communication protocols
    - Implement error handling and connection management
-   - Currently: `TPLinkDevice` for TP-Link Kasa devices
 
 4. **Device Registry** (`devices/registry.py`)
    - Manages multiple device instances
@@ -63,6 +76,7 @@ tplink-control/
    - Loads device configuration from JSON file or environment variables
    - Maintains backward compatibility with `.env` setup
    - Supports multiple device configurations
+   - Handles different device types with type-specific parameters
 
 6. **Web Interface**
    - Single-page HTML application
@@ -111,17 +125,63 @@ tplink-control/
 
 ### JSON Configuration File
 
-Create a `.devices.json` file to manage multiple devices:
+Create a `.devices.json` file to manage multiple devices. The configuration format varies by device type:
 
+#### TP-Link Kasa
 ```json
 {
-  "default": {
+  "device-name": {
     "type": "tplink",
     "device_ip": "192.168.1.100"
-  },
-  "christmas-tree": {
-    "type": "tplink",
-    "device_ip": "192.168.1.101"
+  }
+}
+```
+
+#### Philips Hue
+```json
+{
+  "device-name": {
+    "type": "hue",
+    "bridge_ip": "192.168.1.101",
+    "api_key": "your-api-key",
+    "light_id": "light-id"  // OR "group_id": "group-id"
+  }
+}
+```
+
+#### Nanoleaf
+```json
+{
+  "device-name": {
+    "type": "nanoleaf",
+    "device_ip": "192.168.1.102",
+    "auth_token": "your-auth-token"
+  }
+}
+```
+
+#### Geeni (Tuya Protocol)
+```json
+{
+  "device-name": {
+    "type": "geeni",
+    "device_id": "your-device-id",
+    "device_ip": "192.168.1.103",
+    "local_key": "your-local-key",
+    "device_version": "3.3"  // Optional, defaults to "3.3"
+  }
+}
+```
+
+#### Cree Connected (Tuya Protocol)
+```json
+{
+  "device-name": {
+    "type": "cree",
+    "device_id": "your-device-id",
+    "device_ip": "192.168.1.104",
+    "local_key": "your-local-key",
+    "device_version": "3.3"  // Optional, defaults to "3.3"
   }
 }
 ```
@@ -135,7 +195,11 @@ The configuration system:
 
 1. Device must be on the same network as the application
 2. Device must be set up via the manufacturer's app first
-3. Device IP can be discovered using brand-specific tools (e.g., `kasa discover` for TP-Link)
+3. Device IP can be discovered using brand-specific tools:
+   - TP-Link: `kasa discover`
+   - Hue: Check router or Hue app
+   - Nanoleaf: Check router or Nanoleaf app
+   - Geeni/Cree: Use Tuya discovery tools
 
 ## Key Design Decisions
 
@@ -147,6 +211,7 @@ The configuration system:
 6. **Form-based POST**: Uses HTML form submission instead of JavaScript/AJAX
 7. **Server-side rendering**: Device state fetched on each page load
 8. **Enhanced Error Handling**: User-friendly error messages with proper HTTP status codes
+9. **Type-Specific Configuration**: Each device type has its own configuration schema
 
 ## Device Adapter Pattern
 
@@ -154,12 +219,12 @@ The configuration system:
 
 To add support for a new device brand:
 
-1. Create a new file in `devices/` (e.g., `devices/hue.py`)
+1. Create a new file in `devices/` (e.g., `devices/newbrand.py`)
 2. Import and inherit from `SmartDevice`:
 ```python
 from devices.base import SmartDevice, DeviceError, DeviceConnectionError
 
-class HueDevice(SmartDevice):
+class NewBrandDevice(SmartDevice):
     # Implementation
 ```
 
@@ -176,7 +241,8 @@ class HueDevice(SmartDevice):
    - `async def set_color(self, color: str) -> None`
 
 5. Register the adapter in `devices/__init__.py`
-6. Update configuration system to support the new device type
+6. Update `app.py` to support the new device type in `initialize_devices()`
+7. Update configuration system if needed
 
 ## Code Patterns
 
@@ -244,6 +310,9 @@ async def index(device: str = "default"):
 
 - **fastapi**: Web framework for building APIs and web apps
 - **python-kasa**: Library for controlling TP-Link Kasa devices
+- **aiohue**: Async library for controlling Philips Hue devices via Hue Bridge
+- **nanoleafapi**: Python wrapper for Nanoleaf OpenAPI
+- **tinytuya**: Library for controlling Tuya-based devices (Geeni, Cree)
 - **python-dotenv**: Environment variable management
 - **uvicorn**: ASGI server for running FastAPI
 
@@ -259,22 +328,45 @@ uvicorn app:app --host 0.0.0.0 --port 8000
 
 The application runs on `0.0.0.0:8000` by default, making it accessible from any network interface.
 
+## Device-Specific Notes
+
+### TP-Link Kasa
+- Uses local network communication
+- No authentication required
+- Supports smart plugs and switches
+
+### Philips Hue
+- Requires Hue Bridge on local network
+- API key (username) required for authentication
+- Supports individual lights and light groups
+- Supports brightness and color control
+- Uses aiohue library (async)
+
+### Nanoleaf
+- Direct device communication on port 16021
+- Authentication token required
+- Token generation requires holding power button for 5-7 seconds
+- Supports brightness and color control
+
+### Geeni / Cree (Tuya Protocol)
+- Uses Tuya protocol for local control
+- Requires device ID, IP address, and local key
+- Local key can be obtained from Tuya IoT Platform
+- Supports brightness and color control
+- Uses tinytuya library
+
 ## Future Extensions
 
 The architecture is designed to support:
 
 1. **Additional Device Brands**: Easy to add via adapter pattern
-   - Philips Hue (planned)
-   - Nanoleaf (planned)
-   - Geeni (planned)
-   - Cree (planned)
-   - Wyze (planned)
-   - Roku Smart Lights (planned)
+   - Wyze (planned - Phase 3)
+   - Roku Smart Lights (planned - Phase 3)
 
-2. **Advanced Features**:
-   - Brightness control for lights
-   - Color control for RGB devices
-   - Device grouping/rooms
+2. **Advanced Features** (partially implemented):
+   - ✅ Brightness control for lights (Hue, Nanoleaf, Geeni, Cree)
+   - ✅ Color control for RGB devices (Hue, Nanoleaf, Geeni, Cree)
+   - Device grouping/rooms (Hue groups supported)
    - Scheduling and automation
    - Device discovery
 
@@ -282,6 +374,7 @@ The architecture is designed to support:
    - JSON API endpoints for programmatic access
    - WebSocket support for real-time updates
    - Device information endpoints
+   - Brightness/color control endpoints
 
 4. **Testing**:
    - Unit tests for device adapters
@@ -300,3 +393,7 @@ The architecture is designed to support:
 - All device adapters must implement the `SmartDevice` interface
 - The device registry manages device instances at runtime
 - Configuration is loaded once at startup
+- Each device type has specific configuration requirements
+- Tuya-based devices (Geeni, Cree) share similar implementation patterns
+- Hue devices support both individual lights and groups
+- Nanoleaf requires authentication token generation process
